@@ -15,6 +15,7 @@ using ACE.Server.Physics.Common;
 using ACE.Server.Physics.Hooks;
 using ACE.Server.Physics.Managers;
 using ACE.Server.WorldObjects;
+using ACE.Server.Physics.SIMD;
 
 using log4net;
 
@@ -501,6 +502,13 @@ namespace ACE.Server.Physics
 
             if (pSpheres.Count == 0 || (spheres.Count == 0 && cylspheres.Count == 0))
                 return false;
+
+            // SIMD Integration: Use SIMD-optimized collision detection when available
+            if (SIMDPhysicsEngine.Config.EnableSIMDOptimizations && 
+                pSpheres.Count > 1 && spheres.Count > 1)
+            {
+                return this.IsTouchingSIMD(obj);
+            }
 
             foreach (var pSphere in pSpheres)
             {

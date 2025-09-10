@@ -144,7 +144,7 @@ namespace ACE.Server.Entity
         public readonly RateMonitor Monitor1h = new RateMonitor();
         private readonly TimeSpan last1hClearInteval = TimeSpan.FromHours(1);
         private DateTime last1hClear;
-        private bool monitorsRequireEventStart = true;
+        internal bool monitorsRequireEventStart = true;
 
         // Used for cumulative ServerPerformanceMonitor event recording
         private readonly Stopwatch stopwatch = new Stopwatch();
@@ -1023,6 +1023,67 @@ namespace ACE.Server.Entity
             ProcessPendingWorldObjectAdditionsAndRemovals();
 
             return worldObjects.Values;
+        }
+
+        /// <summary>
+        /// Returns physics objects suitable for SIMD batch processing.
+        /// Filters for active physics objects that can benefit from vectorized operations.
+        /// </summary>
+        public List<Physics.PhysicsObj> GetActivePhysicsObjectsForSIMD()
+        {
+            ProcessPendingWorldObjectAdditionsAndRemovals();
+
+            var physicsObjects = new List<Physics.PhysicsObj>();
+
+            foreach (var wo in worldObjects.Values)
+            {
+                if (wo.PhysicsObj?.is_active() == true)
+                {
+                    // Only include objects that will benefit from SIMD processing
+                    if (wo.PhysicsObj.Velocity != Vector3.Zero || 
+                        wo.PhysicsObj.Acceleration != Vector3.Zero ||
+                        wo.PhysicsObj.IsAnimating ||
+                        wo.PhysicsObj.TransientState.HasFlag(Physics.Common.TransientStateFlags.Active))
+                    {
+                        physicsObjects.Add(wo.PhysicsObj);
+                    }
+                }
+            }
+
+            return physicsObjects;
+        }
+
+        /// <summary>
+        /// Returns world objects that should be excluded from SIMD batch processing.
+        /// These objects need individual processing due to special handling requirements.
+        /// </summary>
+        public List<WorldObject> GetWorldObjectsRequiringIndividualPhysics()
+        {
+            ProcessPendingWorldObjectAdditionsAndRemovals();
+
+            var individualObjects = new List<WorldObject>();
+
+            foreach (var wo in worldObjects.Values)
+            {
+                if (wo.PhysicsObj?.is_active() == true)
+                {
+                    // Objects that require individual processing
+                    bool requiresIndividual = wo.PhysicsObj.Velocity == Vector3.Zero && 
+                                             wo.PhysicsObj.Acceleration == Vector3.Zero &&
+                                             !wo.PhysicsObj.IsAnimating &&
+                                             !wo.PhysicsObj.TransientState.HasFlag(Physics.Common.TransientStateFlags.Active);
+
+                    if (requiresIndividual)
+                        individualObjects.Add(wo);
+                }
+                else if (wo.PhysicsObj != null)
+                {
+                    // Inactive physics objects that still need individual processing
+                    individualObjects.Add(wo);
+                }
+            }
+
+            return individualObjects;
         }
 
         public List<WorldObject> GetAllWorldObjectsForDiagnostics()

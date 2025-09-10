@@ -69,6 +69,24 @@ namespace ACE.Common
 
         public bool MultiThreadedLandblockGroupTicking { get; set; } = false;
 
+        /// <summary>
+        /// Enable SIMD (Single Instruction, Multiple Data) optimizations for physics calculations.
+        /// Provides significant performance improvements for batch vector operations on modern CPUs.
+        /// </summary>
+        public bool EnableSIMDPhysicsOptimizations { get; set; } = true;
+
+        /// <summary>
+        /// Minimum number of physics objects required before using SIMD batch processing.
+        /// Lower values use SIMD more aggressively, higher values reduce overhead for small batches.
+        /// </summary>
+        public int SIMDMinBatchSize { get; set; } = 8;
+
+        /// <summary>
+        /// Enable detailed SIMD performance monitoring and logging.
+        /// Useful for benchmarking and optimization but may impact performance.
+        /// </summary>
+        public bool EnableSIMDPerformanceLogging { get; set; } = false;
+
 
         // World Thread Management
         [JsonIgnore]

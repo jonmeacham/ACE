@@ -13,6 +13,7 @@ using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Server.Entity;
 using ACE.Server.WorldObjects;
+using ACE.Server.Physics.SIMD;
 
 using log4net;
 
@@ -305,6 +306,11 @@ namespace ACE.Server.Managers
 
             var movedObjects = new ConcurrentBag<WorldObject>();
 
+            // Configure SIMD physics optimizations
+            SIMDPhysicsEngine.Config.EnableSIMDOptimizations = ConfigManager.Config.Server.Threading.EnableSIMDPhysicsOptimizations;
+            SIMDPhysicsEngine.Config.MinObjectsForSIMD = ConfigManager.Config.Server.Threading.SIMDMinBatchSize;
+            SIMDPhysicsEngine.Config.EnablePerformanceLogging = ConfigManager.Config.Server.Threading.EnableSIMDPerformanceLogging;
+
             if (ConfigManager.Config.Server.Threading.MultiThreadedLandblockGroupPhysicsTicking)
             {
                 CurrentlyTickingLandblockGroupsMultiThreaded = true;
@@ -321,8 +327,11 @@ namespace ACE.Server.Managers
                     var swInner = new Stopwatch();
                     swInner.Start();
 
-                    foreach (var landblock in landblockGroup)
-                        landblock.TickPhysics(portalYearTicks, movedObjects);
+                    // SIMD Integration: Process landblock group with batch optimizations
+                    if (ConfigManager.Config.Server.Threading.EnableSIMDPhysicsOptimizations)
+                        TickPhysicsLandblockGroupSIMD(landblockGroup, portalYearTicks, movedObjects);
+                    else
+                        TickPhysicsLandblockGroupScalar(landblockGroup, portalYearTicks, movedObjects);
 
                     swInner.Stop();
                     landblockGroup.TickPhysicsTracker.RegisterAmount(swInner.Elapsed.TotalSeconds);
@@ -346,8 +355,11 @@ namespace ACE.Server.Managers
             {
                 foreach (var landblockGroup in landblockGroups)
                 {
-                    foreach (var landblock in landblockGroup)
-                        landblock.TickPhysics(portalYearTicks, movedObjects);
+                    // SIMD Integration: Process landblock group with batch optimizations
+                    if (ConfigManager.Config.Server.Threading.EnableSIMDPhysicsOptimizations)
+                        TickPhysicsLandblockGroupSIMD(landblockGroup, portalYearTicks, movedObjects);
+                    else
+                        TickPhysicsLandblockGroupScalar(landblockGroup, portalYearTicks, movedObjects);
                 }
             }
 
@@ -361,6 +373,123 @@ namespace ACE.Server.Managers
                 // assume adjacency move here?
                 RelocateObjectForPhysics(movedObject, true);
             }
+        }
+
+        /// <summary>
+        /// Processes physics for a landblock group using SIMD batch optimizations
+        /// </summary>
+        private static void TickPhysicsLandblockGroupSIMD(LandblockGroup landblockGroup, double portalYearTicks, ConcurrentBag<WorldObject> movedObjects)
+        {
+            // Collect all physics objects that can benefit from SIMD batch processing
+            var allPhysicsObjects = new List<Physics.PhysicsObj>();
+            var individualObjects = new List<WorldObject>();
+
+            foreach (var landblock in landblockGroup)
+            {
+                if (landblock.IsDormant)
+                    continue;
+
+                landblock.Monitor5m.Restart();
+                landblock.Monitor1h.Restart();
+                landblock.monitorsRequireEventStart = false;
+
+                landblock.ProcessPendingWorldObjectAdditionsAndRemovals();
+
+                // Collect objects for SIMD batch processing
+                var simdCandidates = landblock.GetActivePhysicsObjectsForSIMD();
+                allPhysicsObjects.AddRange(simdCandidates);
+
+                // Collect objects that need individual processing
+                var individual = landblock.GetWorldObjectsRequiringIndividualPhysics();
+                individualObjects.AddRange(individual);
+            }
+
+            // Process physics objects in SIMD batches if we have enough objects
+            if (allPhysicsObjects.Count >= ConfigManager.Config.Server.Threading.SIMDMinBatchSize)
+            {
+                var sw = Stopwatch.StartNew();
+
+                // Use SIMD batch processing for significant performance improvement
+                SIMDPhysicsEngine.UpdatePhysicsBatch(allPhysicsObjects, (float)portalYearTicks);
+
+                sw.Stop();
+                if (ConfigManager.Config.Server.Threading.EnableSIMDPerformanceLogging)
+                {
+                    PhysicsObjExtensions.PerformanceMonitor.RecordSIMDOperation(sw.Elapsed.TotalMilliseconds);
+                }
+
+                // Check for objects that moved landblocks
+                foreach (var physicsObj in allPhysicsObjects)
+                {
+                    var worldObj = physicsObj.WeenieObj?.WorldObject;
+                    if (worldObj != null && HasObjectMovedLandblock(worldObj))
+                    {
+                        movedObjects.Add(worldObj);
+                    }
+                }
+            }
+            else
+            {
+                // Not enough objects for efficient SIMD batching, fall back to individual processing
+                foreach (var physicsObj in allPhysicsObjects)
+                {
+                    var worldObj = physicsObj.WeenieObj?.WorldObject;
+                    if (worldObj != null)
+                    {
+                        var landblockUpdate = worldObj.UpdateObjectPhysics();
+                        if (landblockUpdate)
+                            movedObjects.Add(worldObj);
+                    }
+                }
+            }
+
+            // Process objects that require individual handling
+            var sw2 = Stopwatch.StartNew();
+            foreach (var worldObj in individualObjects)
+            {
+                var landblockUpdate = worldObj.UpdateObjectPhysics();
+                if (landblockUpdate)
+                    movedObjects.Add(worldObj);
+            }
+            sw2.Stop();
+
+            if (ConfigManager.Config.Server.Threading.EnableSIMDPerformanceLogging && individualObjects.Count > 0)
+            {
+                PhysicsObjExtensions.PerformanceMonitor.RecordScalarOperation(sw2.Elapsed.TotalMilliseconds);
+            }
+
+            // Update landblock monitors
+            foreach (var landblock in landblockGroup)
+            {
+                if (!landblock.IsDormant)
+                {
+                    landblock.Monitor5m.Pause();
+                    landblock.Monitor1h.Pause();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Processes physics for a landblock group using traditional scalar processing
+        /// </summary>
+        private static void TickPhysicsLandblockGroupScalar(LandblockGroup landblockGroup, double portalYearTicks, ConcurrentBag<WorldObject> movedObjects)
+        {
+            foreach (var landblock in landblockGroup)
+                landblock.TickPhysics(portalYearTicks, movedObjects);
+        }
+
+        /// <summary>
+        /// Checks if a world object has moved to a different landblock
+        /// </summary>
+        private static bool HasObjectMovedLandblock(WorldObject worldObject)
+        {
+            if (worldObject.PhysicsObj?.CurCell == null)
+                return false;
+
+            var currentLandblockId = worldObject.Location?.LandblockId.Raw ?? 0;
+            var newLandblockId = worldObject.PhysicsObj.CurCell.ID;
+
+            return (currentLandblockId >> 16) != (newLandblockId >> 16);
         }
 
         private static void TickMultiThreadedWork()
