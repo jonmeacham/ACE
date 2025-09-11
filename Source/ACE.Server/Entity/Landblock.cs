@@ -23,6 +23,7 @@ using ACE.Server.Entity.Actions;
 using ACE.Server.Factories;
 using ACE.Server.Managers;
 using ACE.Server.Physics.Common;
+using ACE.Server.Physics;
 using ACE.Server.Network.GameMessages;
 using ACE.Server.WorldObjects;
 
@@ -629,7 +630,7 @@ namespace ACE.Server.Entity
             }
         }
 
-        private void ProcessPendingWorldObjectAdditionsAndRemovals()
+        internal void ProcessPendingWorldObjectAdditionsAndRemovals()
         {
             if (pendingAdditions.Count > 0)
             {
@@ -1043,7 +1044,7 @@ namespace ACE.Server.Entity
                     if (wo.PhysicsObj.Velocity != Vector3.Zero || 
                         wo.PhysicsObj.Acceleration != Vector3.Zero ||
                         wo.PhysicsObj.IsAnimating ||
-                        wo.PhysicsObj.TransientState.HasFlag(Physics.Common.TransientStateFlags.Active))
+                        wo.PhysicsObj.TransientState.HasFlag(ACE.Server.Physics.TransientStateFlags.Active))
                     {
                         physicsObjects.Add(wo.PhysicsObj);
                     }
@@ -1071,7 +1072,7 @@ namespace ACE.Server.Entity
                     bool requiresIndividual = wo.PhysicsObj.Velocity == Vector3.Zero && 
                                              wo.PhysicsObj.Acceleration == Vector3.Zero &&
                                              !wo.PhysicsObj.IsAnimating &&
-                                             !wo.PhysicsObj.TransientState.HasFlag(Physics.Common.TransientStateFlags.Active);
+                                             !wo.PhysicsObj.TransientState.HasFlag(ACE.Server.Physics.TransientStateFlags.Active);
 
                     if (requiresIndividual)
                         individualObjects.Add(wo);

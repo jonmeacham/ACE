@@ -507,7 +507,7 @@ namespace ACE.Server.Physics
             if (SIMDPhysicsEngine.Config.EnableSIMDOptimizations && 
                 pSpheres.Count > 1 && spheres.Count > 1)
             {
-                return this.IsTouchingSIMD(obj);
+                return PhysicsObjExtensions.IsTouchingSIMD(this, obj);
             }
 
             foreach (var pSphere in pSpheres)
