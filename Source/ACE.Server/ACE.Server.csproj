@@ -9,6 +9,7 @@
   <PropertyGroup>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <PropertyGroup>
