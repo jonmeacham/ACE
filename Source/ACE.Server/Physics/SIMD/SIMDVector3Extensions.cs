@@ -97,6 +97,25 @@ namespace ACE.Server.Physics.SIMD
             }
         }
 
+        /// <summary>
+        /// Performs linear interpolation between multiple Vector3 pairs simultaneously
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void LerpBatch(ReadOnlySpan<Vector3> from, ReadOnlySpan<Vector3> to, ReadOnlySpan<float> t, Span<Vector3> results)
+        {
+            if (from.Length != to.Length || from.Length != t.Length || from.Length != results.Length)
+                throw new ArgumentException("All spans must have the same length");
+
+            if (Vector.IsHardwareAccelerated && from.Length >= Vector<float>.Count)
+            {
+                LerpBatchVectorized(from, to, t, results);
+            }
+            else
+            {
+                LerpBatchScalar(from, to, t, results);
+            }
+        }
+
         #region Vectorized Implementations
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -310,6 +329,78 @@ namespace ACE.Server.Physics.SIMD
             {
                 var length = input[i].Length();
                 output[i] = length > PhysicsGlobals.EPSILON ? input[i] / length : Vector3.Zero;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void LerpBatchVectorized(ReadOnlySpan<Vector3> from, ReadOnlySpan<Vector3> to, ReadOnlySpan<float> t, Span<Vector3> results)
+        {
+            int vectorSize = Vector<float>.Count;
+            int i = 0;
+
+            // Process vectorizable chunks
+            for (; i <= from.Length - vectorSize; i += vectorSize)
+            {
+                // Extract components for SIMD processing
+                Span<float> fromX = stackalloc float[vectorSize];
+                Span<float> fromY = stackalloc float[vectorSize];
+                Span<float> fromZ = stackalloc float[vectorSize];
+                Span<float> toX = stackalloc float[vectorSize];
+                Span<float> toY = stackalloc float[vectorSize];
+                Span<float> toZ = stackalloc float[vectorSize];
+                Span<float> tValues = stackalloc float[vectorSize];
+
+                for (int j = 0; j < vectorSize; j++)
+                {
+                    var fromVec = from[i + j];
+                    var toVec = to[i + j];
+                    fromX[j] = fromVec.X; fromY[j] = fromVec.Y; fromZ[j] = fromVec.Z;
+                    toX[j] = toVec.X; toY[j] = toVec.Y; toZ[j] = toVec.Z;
+                    tValues[j] = t[i + j];
+                }
+
+                // Create vectors and perform lerp
+                var fromXVec = new Vector<float>(fromX);
+                var fromYVec = new Vector<float>(fromY);
+                var fromZVec = new Vector<float>(fromZ);
+                var toXVec = new Vector<float>(toX);
+                var toYVec = new Vector<float>(toY);
+                var toZVec = new Vector<float>(toZ);
+                var tVec = new Vector<float>(tValues);
+
+                // Lerp: from + t * (to - from)
+                var resultX = fromXVec + tVec * (toXVec - fromXVec);
+                var resultY = fromYVec + tVec * (toYVec - fromYVec);
+                var resultZ = fromZVec + tVec * (toZVec - fromZVec);
+
+                // Store results
+                Span<float> resultXArray = stackalloc float[vectorSize];
+                Span<float> resultYArray = stackalloc float[vectorSize];
+                Span<float> resultZArray = stackalloc float[vectorSize];
+
+                resultX.CopyTo(resultXArray);
+                resultY.CopyTo(resultYArray);
+                resultZ.CopyTo(resultZArray);
+
+                for (int j = 0; j < vectorSize; j++)
+                {
+                    results[i + j] = new Vector3(resultXArray[j], resultYArray[j], resultZArray[j]);
+                }
+            }
+
+            // Handle remaining elements
+            for (; i < from.Length; i++)
+            {
+                results[i] = Vector3.Lerp(from[i], to[i], t[i]);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void LerpBatchScalar(ReadOnlySpan<Vector3> from, ReadOnlySpan<Vector3> to, ReadOnlySpan<float> t, Span<Vector3> results)
+        {
+            for (int i = 0; i < from.Length; i++)
+            {
+                results[i] = Vector3.Lerp(from[i], to[i], t[i]);
             }
         }
 
